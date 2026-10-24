@@ -39,6 +39,7 @@
 !/tests/test_setup.py
 !/tests/test_notifications.py
 !/tests/test_notify_slack.py
+!/tests/test_cleanup.py
 !/tools/
 /tools/*
 !/tools/check_python_style.py

@@ -39,6 +39,12 @@ CREATE TABLE IF NOT EXISTS outbox (
  detail TEXT NOT NULL DEFAULT '', slack_ts TEXT, available_at REAL NOT NULL DEFAULT 0,
  created_at REAL NOT NULL
 );
+CREATE INDEX IF NOT EXISTS outbox_binding_status ON outbox(binding_id,status,kind);
+CREATE TABLE IF NOT EXISTS slack_cleanup (
+ channel_id TEXT NOT NULL, slack_ts TEXT NOT NULL,
+ status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', available_at REAL NOT NULL DEFAULT 0,
+ PRIMARY KEY(channel_id,slack_ts)
+);
 CREATE TABLE IF NOT EXISTS cursors (binding_id TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS attempts (
  command_id TEXT PRIMARY KEY, result_json TEXT, reported INTEGER NOT NULL DEFAULT 0
@@ -294,6 +300,44 @@ class Store:
             db.execute("UPDATE commands SET status='uncertain',detail='Router restarted during dispatch; inspect the conversation' WHERE status='claimed'")
             db.execute("UPDATE outbox SET status='uncertain',detail='Router restarted during Slack transmission; inspect Slack' WHERE status='sending'")
 
+    def nextCleanup(_self) -> dict | None:
+        with _self.transaction() as db:
+            now = time.time()
+            #Codex: Share the deletion cooldown across threads, including after a restart.
+            if db.execute("SELECT 1 FROM slack_cleanup WHERE status='pending' AND available_at>? LIMIT 1", (now,)).fetchone():
+                return None
+            row = db.execute("WITH replies AS ("
+                             "SELECT DISTINCT b.id AS binding_id,b.channel_id,b.root_ts,o.slack_ts "
+                             "FROM outbox o JOIN bindings b ON b.id=o.binding_id "
+                             "WHERE b.enabled=1 AND b.root_ts IS NOT NULL AND o.kind='reply' "
+                             "AND o.status='sent' AND o.slack_ts IS NOT NULL "
+                             "AND NOT EXISTS (SELECT 1 FROM bindings root WHERE root.channel_id=b.channel_id AND root.root_ts=o.slack_ts)"
+                             "), ranked AS ("
+                             "SELECT *,ROW_NUMBER() OVER (PARTITION BY binding_id ORDER BY CAST(slack_ts AS REAL) DESC) AS position FROM replies"
+                             ") SELECT r.* FROM ranked r LEFT JOIN slack_cleanup c "
+                             "ON c.channel_id=r.channel_id AND c.slack_ts=r.slack_ts "
+                             "WHERE r.position>100 AND (c.status IS NULL OR c.status='pending') "
+                             "ORDER BY CAST(r.slack_ts AS REAL),r.binding_id LIMIT 1").fetchone()
+            if not row:
+                return None
+            #Codex: Deleting is idempotent: retry the same timestamp if the acknowledgement is lost.
+            db.execute("INSERT INTO slack_cleanup(channel_id,slack_ts,status,available_at) VALUES(?,?,'pending',?) "
+                       "ON CONFLICT(channel_id,slack_ts) DO UPDATE SET available_at=excluded.available_at",
+                       (row["channel_id"], row["slack_ts"], now + 60))
+            return dict(row)
+
+    def cleanupResult(_self,
+                      _channel: str,
+                      _ts: str,
+                      _status: str,
+                      _detail: str = "",
+                      _delay: float = 0):
+        if _status not in ("deleted", "pending", "failed"):
+            raise BridgeError("Invalid cleanup status")
+        with _self.transaction() as db:
+            db.execute("UPDATE slack_cleanup SET status=?,detail=?,available_at=? WHERE channel_id=? AND slack_ts=?",
+                       (_status, _detail, time.time() + _delay, _channel, _ts))
+
     def expireClaims(_self,
                      _age: float = 120):
         with _self.transaction() as db:
@@ -319,7 +363,9 @@ class Store:
                     "commands": [dict(r)
                                  for r in _self.db_.execute("SELECT id,binding_id,status,detail,queue_id FROM commands ORDER BY created_at DESC LIMIT 50")],
                     "outbox": [dict(r)
-                               for r in _self.db_.execute("SELECT id,kind,status,detail FROM outbox WHERE status!='sent' ORDER BY created_at LIMIT 50")]}
+                               for r in _self.db_.execute("SELECT id,kind,status,detail FROM outbox WHERE status!='sent' ORDER BY created_at LIMIT 50")],
+                    "cleanup": [dict(r)
+                                for r in _self.db_.execute("SELECT channel_id,slack_ts,status,detail FROM slack_cleanup WHERE status!='deleted' LIMIT 50")]}
 
     def disable(_self,
                 _agent_id: str,

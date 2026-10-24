@@ -253,6 +253,36 @@ class SlackGateway:
             return {"status": "uncertain",
                     "detail": "Slack acknowledgement unavailable; inspect Slack before retrying"}
 
+    def delete(_self,
+               _message: dict) -> dict:
+        from slack_sdk.errors import SlackApiError
+
+        ts = _message.get("slack_ts")
+        if not isinstance(ts, str) or not TIMESTAMP.fullmatch(ts) or not _message.get("root_ts") or ts == _message["root_ts"]:
+            return {"status": "failed", "detail": "Cleanup requires a recorded thread reply"}
+        try:
+            response = _self.client_.chat_delete(channel=_message["channel_id"], ts=ts)
+            if response.get("ok") is True and response.get("channel") == _message["channel_id"] and response.get("ts") == ts:
+                return {"status": "deleted"}
+            return {"status": "pending", "detail": "Unexpected Slack deletion acknowledgement", "delay": 60}
+        except SlackApiError as exc:
+            error = exc.response.get("error", "unknown_error")
+            if error == "message_not_found":
+                return {"status": "deleted"}
+            if error == "ratelimited":
+                try:
+                    delay = max(1, int(exc.response.headers.get("Retry-After", "60")))
+                except (ValueError, TypeError):
+                    delay = 60
+                return {"status": "pending", "detail": "Slack deletion rate limit", "delay": delay}
+            if error in {"cant_delete_message", "channel_not_found", "invalid_auth", "not_authed",
+                         "token_revoked", "token_expired", "account_inactive", "missing_scope", "no_permission",
+                         "not_allowed_token_type", "is_archived", "ekm_access_denied", "access_denied"}:
+                return {"status": "failed", "detail": f"Slack rejected deletion: {error}"}
+            return {"status": "pending", "detail": "Slack deletion unavailable", "delay": 60}
+        except Exception:
+            return {"status": "pending", "detail": "Slack deletion acknowledgement unavailable", "delay": 60}
+
 
 def deliverOnce(_store: Store,
                 _gateway) -> bool:
@@ -265,6 +295,22 @@ def deliverOnce(_store: Store,
                         _ts=result.get("ts"),
                         _detail=result.get("detail", ""),
                         _delay=result.get("delay", 0))
+    return True
+
+
+def cleanupOnce(_store: Store,
+                _gateway) -> bool:
+    message = _store.nextCleanup()
+    if not message:
+        return False
+    result = _gateway.delete(message)
+    _store.cleanupResult(message["channel_id"],
+                         message["slack_ts"],
+                         result["status"],
+                         result.get("detail", ""),
+                         result.get("delay", 0))
+    if result["status"] == "failed":
+        LOG.warning("Slack reply cleanup failed: %s", result["detail"])
     return True
 
 
@@ -307,6 +353,10 @@ def runRouter(_config: RouterConfig,
                 deliverOnce(_store, gateway)
             except Exception as exc:
                 LOG.error("Outbox cycle failed (%s); inspect local status", type(exc).__name__)
+            try:
+                cleanupOnce(_store, gateway)
+            except Exception as exc:
+                LOG.error("Reply cleanup failed (%s); delivery continues", type(exc).__name__)
             _stop.wait(1.1)
     finally:
         socket_client.close()

@@ -62,6 +62,7 @@ sh setup.sh
 + **Slack requests:** receive progress and the complete final response in that thread.
 + **PC requests:** ordinary chat stays local. Turns that use tools send progress and a completion notice with up to 600 characters of the final answer. No user prompts, reasoning or tool output are mirrored.
 + Progress uses Codex's commentary after tool activity, at most once per two minutes, up to 600 characters. It is an excerpt, not an AI-generated milestone summary. Tool-free PC turns do not notify.
++ Each registered Slack thread automatically keeps the latest **100 Bridge bot replies**, including progress, completion and command acknowledgements. Each part of a split answer counts separately. Older recorded bot replies are permanently deleted gradually while the Router runs; the thread's first message, your commands, other apps' messages and VS Code history are preserved. This also applies to existing replies recorded in the Bridge database after upgrading; deletion failures appear in `codex-slack status` under `cleanup`.
 + For summaries written by Codex at major milestones, use the optional [webhook notifications](#progress-notifications--optional) below instead of automatic excerpts.
 + Keep VS Code and the registered conversation open; boot services do not open VS Code or resume sessions. Handle permission approvals in VS Code. Use `codex-slack unbind --thread UUID` to disconnect a conversation.
 
