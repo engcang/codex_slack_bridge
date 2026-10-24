@@ -1,0 +1,17 @@
+#Codex: Source distributions contain only the runtime and required metadata.
+global-exclude *
+include LICENSE README.md pyproject.toml MANIFEST.in setup.sh
+include src/codex_slack_bridge/__init__.py
+include src/codex_slack_bridge/__main__.py
+include src/codex_slack_bridge/agent.py
+include src/codex_slack_bridge/cli.py
+include src/codex_slack_bridge/codex.py
+include src/codex_slack_bridge/config.py
+include src/codex_slack_bridge/router.py
+include src/codex_slack_bridge/setup.py
+include src/codex_slack_bridge/store.py
+include src/codex_slack_bridge/transport.py
+include src/codex_slack_bridge/templates/agent.toml
+include src/codex_slack_bridge/templates/router.toml
+include src/codex_slack_bridge/templates/router.env.example
+include src/codex_slack_bridge/templates/slack-app-manifest.json

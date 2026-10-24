@@ -1,0 +1,22 @@
+[router]
+host = "127.0.0.1"
+port = 8766
+state_dir = "~/.local/state/codex-slack-router"
+#Codex: For a non-loopback listener, configure a valid HTTPS certificate:
+# tls_cert = "/absolute/path/fullchain.pem"
+# tls_key = "/absolute/path/privkey.pem"
+
+[slack]
+team_id = "T_REPLACE_ME"
+channel_id = "C_REPLACE_ME"
+allowed_channel_ids = ["C_REPLACE_ME"]
+allowed_user_ids = ["U_REPLACE_ME"]
+bot_token_env = "SLACK_BOT_TOKEN"
+app_token_env = "SLACK_APP_TOKEN"
+
+[agents.workstation]
+token_env = "CODEX_SLACK_AGENT_TOKEN"
+
+#Codex: Add each PC with a distinct ID and token:
+# [agents.laptop]
+# token_env = "CODEX_SLACK_LAPTOP_TOKEN"

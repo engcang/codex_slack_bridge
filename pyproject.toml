@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-slack-bridge"
+version = "0.1.0a1"
+description = "Route Slack thread replies to existing Codex sessions without taking over the session"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Eungchang Mason Lee"}]
+dependencies = []
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Chat",
+]
+
+[project.optional-dependencies]
+router = ["slack-sdk>=3.33,<4"]
+dev = ["pytest>=7", "build>=1.2", "twine>=6", "ruff>=0.9", "pre-commit>=4,<5"]
+
+[project.scripts]
+codex-slack = "codex_slack_bridge.cli:main"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["codex_slack_bridge"]
+namespaces = false
+
+[tool.setuptools.package-data]
+codex_slack_bridge = ["templates/agent.toml",
+                    "templates/router.toml",
+                    "templates/router.env.example",
+                    "templates/slack-app-manifest.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

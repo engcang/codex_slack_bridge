@@ -1,0 +1,41 @@
+exclude: >-
+    (?x)^(
+        third_party/|.*/third_party/|
+        build/|dist/|.venv/|.*\.egg-info/|
+        AGENTS\.md|docs/CODING_STYLE\.md
+    )
+
+repos:
+    - repo: https://github.com/pre-commit/pre-commit-hooks
+      rev: v5.0.0
+      hooks:
+          - id: check-yaml
+          - id: check-json
+          - id: check-toml
+          - id: check-added-large-files
+          - id: check-case-conflict
+          - id: check-merge-conflict
+          - id: end-of-file-fixer
+          - id: mixed-line-ending
+            args: [--fix=no]
+          - id: trailing-whitespace
+            args: [--markdown-linebreak-ext=md]
+
+    - repo: local
+      hooks:
+          - id: ruff
+            name: ruff lint
+            entry: ruff check
+            language: python
+            additional_dependencies: [ruff==0.17.1]
+            types: [python]
+          - id: python-style
+            name: Python naming and argument alignment
+            entry: python tools/check_python_style.py
+            language: python
+            types: [python]
+          - id: no-tabs
+            name: disallow tabs in first-party text files
+            entry: '\t'
+            language: pygrep
+            types: [text]

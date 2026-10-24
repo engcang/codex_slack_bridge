@@ -1,0 +1,12 @@
+[agent]
+#Codex: Must match a key in the Router's [agents] table. Keep stable across restarts.
+agent_id = "workstation"
+router_url = "http://127.0.0.1:8766"
+state_dir = "~/.local/state/codex-slack-agent"
+codex_home = "~/.codex"
+#Codex: An absolute path to the tested VS Code-bundled binary is recommended.
+codex_bin = "codex"
+token_file = "~/.config/codex-slack-bridge/agent.token"
+#Codex: Alternatively remove token_file and use token_env = "CODEX_SLACK_AGENT_TOKEN".
+poll_interval = 2.0
+queue_timeout = 30.0
