@@ -7,6 +7,7 @@ from conftest import TURN, A, B, bind, paginate, slackEvent
 from test_codex import append
 
 from codex_slack_bridge.codex import Codex
+from codex_slack_bridge.router import deliverOnce
 
 
 def event(_worked=False,
@@ -18,7 +19,7 @@ def outputs(_router):
     return [dict(row) for row in _router.store_.db_.execute("SELECT * FROM outbox WHERE kind!='root'")]
 
 
-def test_local_chat_silent_local_work_excerpt_slack_reply_complete(router):
+def test_local_chat_silent_local_work_and_slack_reply_complete(router):
     bind(router)
     router.api("pc-a", "response", event())
     assert outputs(router) == []
@@ -27,8 +28,7 @@ def test_local_chat_silent_local_work_excerpt_slack_reply_complete(router):
     local["event_id"] = f"{A}:{B}"
     router.api("pc-a", "response", local)
     text = outputs(router)[0]["text"]
-    assert text.startswith("PC task completed.\nResult excerpt:")
-    assert len(text) < 700
+    assert text == "PC task completed.\n\n" + local["text"]
     command = router.slackEvent(slackEvent())
     router.api("pc-a", "claim", {})
     reply = event(False, [command])
@@ -37,6 +37,43 @@ def test_local_chat_silent_local_work_excerpt_slack_reply_complete(router):
     router.api("pc-a", "response", reply)
     assert outputs(router)[-1]["text"] == reply["text"]
     assert router.store_.status()["commands"][0]["status"] == "completed"
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "interrupted"])
+@pytest.mark.parametrize("from_slack", [False, True])
+def test_full_final_answer_is_delivered_in_order_without_truncation(router,
+                                                                    status,
+                                                                    from_slack):
+    bind(router)
+    commands = set()
+    if from_slack:
+        commands.add(router.slackEvent(slackEvent()))
+        router.api("pc-a", "claim", {})
+    text = "  Full result ✓\n" * 600 + "LAST LINE\n  "
+    response = Codex.event(A, TURN, status, text, commands, True)
+    router.api("pc-a", "response", response)
+    router.api("pc-a", "response", response)
+    delivered = []
+
+    class Slack:
+        def post(_self,
+                 _output):
+            delivered.append(_output)
+            return {"status": "sent", "ts": f"200.{len(delivered):06d}"}
+
+    while deliverOnce(router.store_, Slack()):
+        pass
+    chunks = [row["text"] for row in delivered if row["id"].startswith("response:")]
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 3500 for chunk in chunks)
+    if not from_slack:
+        expected = f"PC task {status}.\n\n{text}"
+    elif status != "completed":
+        expected = f"Codex turn {status}.\n\n{text}".rstrip()
+    else:
+        expected = text
+    assert "".join(chunks) == expected
+    assert all(row["root_ts"] == "100.001" for row in delivered)
 
 
 def test_unrelated_command_reference_does_not_mirror_local_chat(router):

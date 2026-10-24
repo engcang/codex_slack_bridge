@@ -60,7 +60,8 @@ sh setup.sh
 + Conversations are listed newest first, five at a time. Enter **`m`** for more, a number to select, or **`q`** to cancel. Closed conversations must be opened in VS Code before selecting them. Use `codex-slack add --all` to show everything at once; `codex-slack` alone also opens the picker.
 + Reply inside the new Slack message's **thread**. Only your configured Slack member ID can send commands. Repeat `add` for each new conversation; existing registrations survive restarts.
 + **Slack requests:** receive progress and the complete final response in that thread.
-+ **PC requests:** ordinary chat stays local. Turns that use tools send progress and a completion notice with up to 600 characters of the final answer. No user prompts, reasoning or tool output are mirrored.
++ **PC requests:** ordinary chat stays local. Turns that use tools send progress and the complete final answer. No user prompts, reasoning or tool output are mirrored.
++ Final answers are sent in full, split into ordered messages of up to 3,500 characters when needed.
 + Progress uses Codex's commentary after tool activity, at most once per two minutes, up to 600 characters. It is an excerpt, not an AI-generated milestone summary. Tool-free PC turns do not notify.
 + Each registered Slack thread automatically keeps the latest **100 Bridge bot replies**, including progress, completion and command acknowledgements. Each part of a split answer counts separately. Older recorded bot replies are permanently deleted gradually while the Router runs; the thread's first message, your commands, other apps' messages and VS Code history are preserved. This also applies to existing replies recorded in the Bridge database after upgrading; deletion failures appear in `codex-slack status` under `cleanup`.
 + For summaries written by Codex at major milestones, use the optional [webhook notifications](#progress-notifications--optional) below instead of automatic excerpts.
@@ -93,7 +94,7 @@ bash -ic 'exec "$HOME/.local/bin/codex-slack-notify" "$1"' _ '[setup] Notificati
 ```
 
 + Expect **`Slack notification sent.`** and a message in the chosen channel. Notification failures print a warning without failing the main task.
-+ To disable duplicate Bridge excerpts, add `automatic_notifications = false` inside the existing **`[router]`** section of `~/.config/codex-slack-bridge/router.toml` on the Router PC, then run `systemctl --user restart codex-slack-router`. This disables automatic progress and PC completion excerpts for all its sessions; Slack command results remain enabled.
++ To disable duplicate Bridge notifications, add `automatic_notifications = false` inside the existing **`[router]`** section of `~/.config/codex-slack-bridge/router.toml` on the Router PC, then run `systemctl --user restart codex-slack-router`. This disables automatic progress and PC completion notifications for all its sessions; Slack command results remain enabled.
 
 ### 3. Give each Codex session this prompt
 

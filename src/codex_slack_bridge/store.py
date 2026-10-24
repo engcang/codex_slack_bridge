@@ -245,11 +245,7 @@ class Store:
             if not from_slack:
                 if not _automatic_notifications or not _event.get("worked"):
                     return
-                excerpt = text.strip()[:600]
-                suffix = "..." if len(text.strip()) > 600 else ""
-                text = f"PC task {_event['status']}."
-                if excerpt:
-                    text += f"\nResult excerpt:\n{excerpt}{suffix}"
+                text = f"PC task {_event['status']}." + (f"\n\n{text}" if text else "")
                 _self.outbox(db, binding["id"], f"response:{receipt}", text)
                 return
             if _event["status"] != "completed":
