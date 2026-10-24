@@ -2,6 +2,8 @@
 host = "127.0.0.1"
 port = 8766
 state_dir = "~/.local/state/codex-slack-router"
+#Codex: Disable when sessions send webhook summaries; Slack command replies still arrive.
+automatic_notifications = true
 #Codex: For a non-loopback listener, configure a valid HTTPS certificate:
 # tls_cert = "/absolute/path/fullchain.pem"
 # tls_key = "/absolute/path/privkey.pem"

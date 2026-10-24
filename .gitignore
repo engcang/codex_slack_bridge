@@ -17,6 +17,7 @@
 !/src/codex_slack_bridge/cli.py
 !/src/codex_slack_bridge/codex.py
 !/src/codex_slack_bridge/config.py
+!/src/codex_slack_bridge/notify_slack.py
 !/src/codex_slack_bridge/router.py
 !/src/codex_slack_bridge/setup.py
 !/src/codex_slack_bridge/store.py
@@ -37,6 +38,7 @@
 !/tests/test_routing.py
 !/tests/test_setup.py
 !/tests/test_notifications.py
+!/tests/test_notify_slack.py
 !/tools/
 /tools/*
 !/tools/check_python_style.py

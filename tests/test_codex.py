@@ -127,7 +127,7 @@ def test_queue_uses_literal_argv_and_explicit_uuid(home,
                     "--thread",
                     A,
                     "--message",
-                    f"{REQUEST_PREFIX}{B}\n\n{text}"]
+                    text]
     assert not kwargs.get("shell")
     assert "resume" not in argv
 
@@ -184,3 +184,39 @@ def test_snapshot_does_not_skip_an_unfinished_earlier_turn(home):
                        [(A, B, "inProgress", 1),
                         (A, TURN, "completed", 10)])
     assert Codex(home).snapshot(A)["ordinal"] == -1
+
+
+def test_sessions_order_newest_first_and_exclude_archived_and_child_threads(home,
+                                                                            monkeypatch):
+    with sqlite3.connect(home / "state_5.sqlite") as db:
+        for index in range(1, 9):
+            db.execute("INSERT INTO threads(id,name,title,cwd,source,rollout_path,history_mode,archived,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                       (f"00000000-0000-4000-8000-{index + 10:012d}", "Conversation", "", "/project", "vscode", "", "legacy", 0, index))
+        db.execute("UPDATE threads SET archived=1 WHERE updated_at=8")
+        db.execute("UPDATE threads SET source='subagent' WHERE updated_at=7")
+    codex = Codex(home)
+    monkeypatch.setattr(codex, "ownerPid", lambda _thread: None)
+    sessions = codex.sessions()
+    assert len(sessions) == 7
+    assert sessions[0]["id"].endswith("000000000016")
+    assert sessions[-1]["id"] == A
+
+
+def test_paginated_plain_prompt_references_are_scoped_to_new_input(home):
+    paginate(home)
+    codex = Codex(home)
+    with sqlite3.connect(home / "thread_history_1.sqlite") as db:
+        db.execute("INSERT INTO thread_turns VALUES(?,?,?,?)", (A, TURN, "inProgress", 1))
+        db.execute("INSERT INTO thread_items VALUES(?,?,?,?)",
+                   (A, TURN, json.dumps({"type": "userMessage", "content": [{"type": "text", "text": "Same prompt"}]}), 2))
+    boundary = codex.inputCursor(A)
+    with sqlite3.connect(home / "thread_history_1.sqlite") as db:
+        db.execute("INSERT INTO thread_items VALUES(?,?,?,?)",
+                   (A, TURN, json.dumps({"type": "userMessage", "content": [{"type": "text", "text": "Same prompt"}]}), 3))
+        db.execute("INSERT INTO thread_items VALUES(?,?,?,?)",
+                   (A, TURN, json.dumps({"type": "agentMessage", "phase": "final_answer", "text": "Done"}), 4))
+        db.execute("UPDATE thread_turns SET status='completed'")
+    events, _ = codex.responses(A, {"mode": "paginated", "ordinal": -1})
+    assert boundary == {"mode": "paginated", "position": 2}
+    assert events[0]["inputs"] == [codex.inputReference("Same prompt", "paginated", 2), codex.inputReference("Same prompt", "paginated", 3)]
+    assert "Same prompt" not in json.dumps(events)

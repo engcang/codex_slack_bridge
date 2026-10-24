@@ -32,6 +32,19 @@ def test_installed_templates_load_and_init_never_overwrites(tmp_path):
     assert manifest["settings"]["socket_mode_enabled"]
 
 
+def test_automatic_notification_setting_is_optional_and_boolean(tmp_path):
+    assert main(["init", "--directory", str(tmp_path)]) == 0
+    path = tmp_path / "router.toml"
+    original = path.read_text()
+    path.write_text(original.replace("automatic_notifications = true\n", ""))
+    assert loadConfig(path, "router").automatic_notifications_ is True
+    path.write_text(original.replace("automatic_notifications = true", "automatic_notifications = false"))
+    assert loadConfig(path, "router").automatic_notifications_ is False
+    path.write_text(original.replace("automatic_notifications = true", 'automatic_notifications = "false"'))
+    with pytest.raises(BridgeError, match="automatic_notifications must be true or false"):
+        loadConfig(path, "router")
+
+
 def test_notify_best_effort_only_changes_exit_code(tmp_path,
                                                    capsys):
     config = str(tmp_path / "missing.toml")

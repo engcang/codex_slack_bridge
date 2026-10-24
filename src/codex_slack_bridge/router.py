@@ -110,7 +110,7 @@ class Router:
             if not isinstance(commands, list) or len(commands) > 100:
                 raise BridgeError("Invalid command references")
             _payload = {**_payload, "command_ids": [threadUuid(x) for x in commands]}
-            _self.store_.response(_agent_id, _payload)
+            _self.store_.response(_agent_id, _payload, _self.config_.automatic_notifications_)
             return {"ok": True}
         if _operation == "unbind":
             _self.store_.disable(_agent_id, threadUuid(_payload.get("thread_id")))

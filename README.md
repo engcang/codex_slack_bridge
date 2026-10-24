@@ -41,8 +41,9 @@ cd codex_slack_bridge
 sh setup.sh
 ```
 
-+ Accept or enter a PC name, then paste the four Slack values when prompted. Tokens are hidden and saved under `~/.config/codex-slack-bridge/`, outside the repository.
++ Accept or enter a PC name, then paste the four Slack values when prompted. Tokens are saved under `~/.config/codex-slack-bridge/`, outside the repository.
 + The installer creates an isolated environment, starts Router/Agent user services and enables boot startup. Ubuntu may request your sudo password for `loginctl enable-linger`; do not run the whole installer with sudo.
++ Successful setup ends with **`Installed. Services start at boot.`** If you see **`Router is not ready`**, follow [Startup troubleshooting](#startup-troubleshooting) before adding a conversation.
 + Rerun `sh setup.sh` to reinstall and restart using the existing configuration and session bindings. To change Slack values, edit `router.env` / `router.toml` in that configuration directory, then rerun setup.
 + The commands below work without activating an environment. If `~/.local/bin` is already on `PATH`, you can shorten them to `codex-slack`.
 
@@ -56,11 +57,63 @@ sh setup.sh
 ~/.local/bin/codex-slack add
 ```
 
++ Conversations are listed newest first, five at a time. Enter **`m`** for more, a number to select, or **`q`** to cancel. Closed conversations must be opened in VS Code before selecting them. Use `codex-slack add --all` to show everything at once; `codex-slack` alone also opens the picker.
 + Reply inside the new Slack message's **thread**. Only your configured Slack member ID can send commands. Repeat `add` for each new conversation; existing registrations survive restarts.
 + **Slack requests:** receive progress and the complete final response in that thread.
 + **PC requests:** ordinary chat stays local. Turns that use tools send progress and a completion notice with up to 600 characters of the final answer. No user prompts, reasoning or tool output are mirrored.
 + Progress uses Codex's commentary after tool activity, at most once per two minutes, up to 600 characters. It is an excerpt, not an AI-generated milestone summary. Tool-free PC turns do not notify.
++ For summaries written by Codex at major milestones, use the optional [webhook notifications](#progress-notifications--optional) below instead of automatic excerpts.
 + Keep VS Code and the registered conversation open; boot services do not open VS Code or resume sessions. Handle permission approvals in VS Code. Use `codex-slack unbind --thread UUID` to disconnect a conversation.
+
+<br>
+
+## Progress notifications — optional
+
++ The included [notify_slack.py](src/codex_slack_bridge/notify_slack.py) sends summaries through an Incoming Webhook. `sh setup.sh` installs it as `~/.local/bin/codex-slack-notify`; rerun setup if upgrading.
++ Notifications appear as separate messages in the webhook's channel, with the PC name and timestamp. Send commands in the **Bridge conversation's thread**, not under a webhook notification. Slack command replies still return to their Bridge thread.
+
+### 1. Set up the webhook
+
++ Reuse an existing webhook, or open [Slack Apps](https://api.slack.com/apps) → **Create New App → From scratch**, name it `codex-noti`, and select your workspace.
++ On that app's settings page, use the **left sidebar → Incoming Webhooks → Activate Incoming Webhooks → Add New Webhook to Workspace**. Choose the notification channel, authorize access, and copy the **Webhook URL**. [Slack's webhook guide](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/).
+
+### 2. Save it on each PC
+
++ Add this line to `~/.bashrc`, replacing the example URL with your webhook URL. Keep the URL out of this repository and chat messages.
+
+```sh
+export SLACK_WEBHOOK_URL='https://hooks.slack.com/services/REPLACE/THIS/URL'
+```
+
++ Test from a terminal. `bash -ic` loads `.bashrc` even when the parent process does not have the variable:
+
+```sh
+bash -ic 'exec "$HOME/.local/bin/codex-slack-notify" "$1"' _ '[setup] Notifications connected'
+```
+
++ Expect **`Slack notification sent.`** and a message in the chosen channel. Notification failures print a warning without failing the main task.
++ To disable duplicate Bridge excerpts, add `automatic_notifications = false` inside the existing **`[router]`** section of `~/.config/codex-slack-bridge/router.toml` on the Router PC, then run `systemctl --user restart codex-slack-router`. This disables automatic progress and PC completion excerpts for all its sessions; Slack command results remain enabled.
+
+### 3. Give each Codex session this prompt
+
++ Replace `SESSION_NAME` with a unique project/session label and paste this into each conversation. Summaries depend on Codex following this instruction; they are not a background monitor.
+
+```text
+For this conversation, use notification label "SESSION_NAME".
+For substantial tasks, whether requested here or through Slack, send a concise
+Slack notification at major milestones, when blocked, and when finished or failed.
+Skip routine tool steps and ordinary chat. Include the session label and a brief
+result or next action, in the same language as our conversation. Do not include
+credentials, private data, or full logs. The notifier adds the PC name and time.
+
+Send each notification with this command, replacing the final quoted message:
+bash -ic 'exec "$HOME/.local/bin/codex-slack-notify" "$1"' _ '[SESSION_NAME] Brief update'
+
+Keep the message as the separate argument shown above; do not insert it into
+the shell command string. Do not read or print the webhook URL. If notification
+delivery fails or is blocked, report that once here and continue the task.
+Continue giving normal progress updates and the final answer in this conversation.
+```
 
 <br>
 
@@ -89,6 +142,46 @@ sh setup.sh --join ~/laptop-pair.json
 + Check delivery: `~/.local/bin/codex-slack status` on the Router PC. Check services: `systemctl --user status codex-slack-agent codex-slack-router` (use `codex-slack-tunnel` instead of Router on another PC).
 + Read logs: `journalctl --user -u codex-slack-agent -u codex-slack-router -u codex-slack-tunnel -n 50`.
 + Stop automatic startup: `systemctl --user disable --now codex-slack-agent codex-slack-router` (substitute Tunnel on another PC). See `codex-slack --help` for delivery recovery commands.
+
+### Startup troubleshooting
+
++ **`Router is not ready`:** services were registered, but the Agent could not reach or authenticate with the Router. Setup is incomplete.
++ Inspect the Router/Agent logs, plus Tunnel logs on additional PCs:
+
+```sh
+journalctl --user -u codex-slack-router -u codex-slack-agent -u codex-slack-tunnel -n 50 --no-pager
+```
+
++ Fix the reported error, then rerun `sh setup.sh` from the updated repository. Saved Slack values and conversation bindings are reused.
++ On additional PCs, keep the Router PC online and confirm SSH connectivity to it.
+
+<br>
+
+## Uninstall
+
++ Remove the services and installed program on each PC:
+
+```sh
+for role in agent router tunnel; do
+    bridge_unit="codex-slack-$role.service"
+    if [ -f "$HOME/.config/systemd/user/$bridge_unit" ]; then
+        systemctl --user disable --now "$bridge_unit" || exit 1
+        rm -f "$HOME/.config/systemd/user/$bridge_unit"
+    fi
+done
+systemctl --user daemon-reload
+rm -f ~/.local/bin/codex-slack ~/.local/bin/codex-slack-notify
+rm -rf ~/.local/share/codex-slack-bridge
+```
+
++ To also delete saved Bridge tokens, conversation bindings and delivery history:
+
+```sh
+rm -rf ~/.config/codex-slack-bridge ~/.local/state/codex-slack-agent ~/.local/state/codex-slack-router
+```
+
++ After removing the Bridge from all PCs, remove its Slack app from your workspace if no longer needed. The cloned repository folder can also be deleted. VS Code and Codex conversations are preserved.
++ If you enabled webhook notifications, remove the `SLACK_WEBHOOK_URL` export from `~/.bashrc` and run `unset SLACK_WEBHOOK_URL` in open terminals. Remove the webhook or its app in Slack when no longer used.
 
 <br>
 

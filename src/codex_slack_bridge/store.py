@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -41,6 +42,10 @@ CREATE TABLE IF NOT EXISTS outbox (
 CREATE TABLE IF NOT EXISTS cursors (binding_id TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS attempts (
  command_id TEXT PRIMARY KEY, result_json TEXT, reported INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS input_links (
+ command_id TEXT PRIMARY KEY REFERENCES attempts(command_id), thread_id TEXT NOT NULL,
+ prompt_hash TEXT NOT NULL, cursor_json TEXT NOT NULL, turn_id TEXT
 );
 """
 
@@ -198,7 +203,8 @@ class Store:
 
     def response(_self,
                  _agent_id: str,
-                 _event: dict):
+                 _event: dict,
+                 _automatic_notifications: bool = True):
         with _self.transaction() as db:
             binding = db.execute("SELECT * FROM bindings WHERE agent_id=? AND thread_id=? AND enabled=1",
                                  (_agent_id, _event["thread_id"])).fetchone()
@@ -209,6 +215,8 @@ class Store:
                 return
             db.execute("INSERT INTO receipts VALUES(?)", (receipt,))
             if _event["status"] == "in_progress":
+                if not _automatic_notifications:
+                    return
                 terminal = f"{_agent_id}:{_event['thread_id']}:{_event['turn_id']}"
                 if db.execute("SELECT 1 FROM receipts WHERE id=?", (terminal,)).fetchone():
                     return
@@ -229,7 +237,7 @@ class Store:
                            (f"Codex turn {_event['status']}", time.time(), command, binding["id"]))
             text = _event["text"]
             if not from_slack:
-                if not _event.get("worked"):
+                if not _automatic_notifications or not _event.get("worked"):
                     return
                 excerpt = text.strip()[:600]
                 suffix = "..." if len(text.strip()) > 600 else ""
@@ -366,6 +374,35 @@ class Store:
         with _self.transaction() as db:
             db.execute("UPDATE attempts SET result_json=? WHERE command_id=?",
                        (json.dumps(_result), _command_id))
+
+    def trackInput(_self,
+                   _command_id: str,
+                   _thread_id: str,
+                   _text: str,
+                   _cursor: dict):
+        with _self.transaction() as db:
+            db.execute("INSERT INTO input_links(command_id,thread_id,prompt_hash,cursor_json) VALUES(?,?,?,?)",
+                       (_command_id, _thread_id, hashlib.sha256(_text.encode()).hexdigest(), json.dumps(_cursor)))
+
+    def matchInput(_self,
+                   _event: dict) -> list[str]:
+        with _self.transaction() as db:
+            rows = db.execute("SELECT i.*,a.result_json FROM input_links i JOIN attempts a ON a.command_id=i.command_id "
+                              "WHERE i.thread_id=? AND (i.turn_id IS NULL OR i.turn_id=?) ORDER BY i.rowid",
+                              (_event["thread_id"], _event["turn_id"])).fetchall()
+            commands = []
+            for row in rows:
+                result = json.loads(row["result_json"]) if row["result_json"] else {}
+                if result.get("status") == "rejected":
+                    continue
+                cursor = json.loads(row["cursor_json"])
+                matched = any(item["hash"] == row["prompt_hash"] and item["mode"] == cursor["mode"]
+                              and item["position"] > cursor["position"] for item in _event.get("inputs", []))
+                if row["turn_id"] == _event["turn_id"] or matched:
+                    db.execute("UPDATE input_links SET turn_id=? WHERE command_id=?",
+                               (_event["turn_id"], row["command_id"]))
+                    commands.append(row["command_id"])
+            return commands
 
     def pendingResults(_self) -> list[tuple[str, dict]]:
         with _self.lock_:

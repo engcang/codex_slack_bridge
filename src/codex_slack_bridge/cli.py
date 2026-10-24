@@ -55,6 +55,8 @@ def parser() -> argparse.ArgumentParser:
                 if name in ("router", "status", "resolve-command", "resolve-output")
                 else "agent")
         command.add_argument("--config", default=f"~/.config/codex-slack-bridge/{kind}.toml")
+        if name in ("add", "sessions"):
+            command.add_argument("--all", action="store_true", help="Show all saved conversations at once")
         if name in ("notify", "doctor", "unbind", "rebind", "add"):
             command.add_argument("--thread",
                                  help="Existing root thread UUID; omit to select a conversation" if name == "add" else "Existing root thread UUID; defaults to CODEX_THREAD_ID")
@@ -88,7 +90,8 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(_argv: list[str] | None = None) -> int:
-    args = parser().parse_args(_argv)
+    arguments = sys.argv[1:] if _argv is None else _argv
+    args = parser().parse_args(arguments or ["add"])
     os.umask(0o077)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     if args.command == "generate-agent-token":
@@ -147,7 +150,7 @@ def main(_argv: list[str] | None = None) -> int:
             assert isinstance(config, AgentConfig)
             codex = Codex(config.codex_home_, config.codex_bin_, config.queue_timeout_)
             if args.command == "sessions":
-                showSessions(codex.sessions())
+                browseSessions(codex, False, args.all)
                 return 0
             if args.command == "doctor":
                 version = codex.check()
@@ -173,16 +176,9 @@ def main(_argv: list[str] | None = None) -> int:
             if args.command == "add":
                 tid = args.thread
                 if not tid:
-                    sessions = codex.sessions()
-                    showSessions(sessions)
-                    if not sessions:
-                        raise BridgeError("Open a saved Codex conversation in VS Code, then run add again")
-                    if not sys.stdin.isatty():
-                        raise BridgeError("Use add --thread UUID when running without an interactive terminal")
-                    selection = input("Conversation number: ").strip()
-                    if not selection.isdigit() or not 1 <= int(selection) <= len(sessions):
-                        raise BridgeError("Invalid conversation number")
-                    tid = sessions[int(selection) - 1]["id"]
+                    tid = browseSessions(codex, True, args.all)
+                    if tid is None:
+                        return 0
                 tid = threadUuid(tid)
                 if not codex.ownerPid(tid):
                     raise BridgeError("Open this existing Codex conversation in VS Code first")
@@ -229,12 +225,49 @@ def main(_argv: list[str] | None = None) -> int:
             store.close()
 
 
-def showSessions(_sessions: list[dict]):
-    for index, session in enumerate(_sessions, 1):
+def browseSessions(_codex: Codex,
+                   _select: bool,
+                   _all: bool = False) -> str | None:
+    sessions = _codex.sessions()
+    if not sessions:
+        raise BridgeError("No saved VS Code conversations found")
+    shown = len(sessions) if _all else min(5, len(sessions))
+    showSessions(sessions[:shown])
+    if not sys.stdin.isatty():
+        if shown < len(sessions):
+            print(f"Showing {shown} of {len(sessions)}. Use --all to show every conversation.")
+        if _select:
+            raise BridgeError("Use add --thread UUID when running without an interactive terminal")
+        return None
+    while True:
+        more = ", m for more" if shown < len(sessions) else ""
+        if not _select and not more:
+            return None
+        selection = input(("Conversation number" if _select else "Browse conversations") + more + ", q to cancel: ").strip().lower()
+        if selection == "q":
+            return None
+        if selection == "m" and more:
+            end = min(shown + 5, len(sessions))
+            showSessions(sessions[shown:end], shown + 1)
+            shown = end
+            continue
+        if _select and selection.isdigit() and 1 <= int(selection) <= shown:
+            session = sessions[int(selection) - 1]
+            if _codex.ownerPid(session["id"]):
+                return session["id"]
+            print("Open this conversation in VS Code, then enter its number again.")
+            continue
+        print("Choose one of the displayed options.")
+
+
+def showSessions(_sessions: list[dict],
+                 _start: int = 1):
+    for index, session in enumerate(_sessions, _start):
         title = session["name"] or session["title"] or "Untitled"
         #Codex: Titles are untrusted terminal text, not executable escape sequences.
         label = "".join(char if char.isprintable() else " " for char in f"{title} | {session['cwd']}")
-        print(f"{index}. {label}\n   {session['id']}")
+        state = "open" if session.get("is_open") else "closed"
+        print(f"{index}. [{state}] {label}\n   {session['id']}")
 
 
 def stopEvent() -> threading.Event:

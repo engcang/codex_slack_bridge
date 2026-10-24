@@ -53,7 +53,7 @@ def prompt(_label: str,
 
 def tokenInput(_label: str,
                _prefix: str) -> str:
-    value = getpass.getpass(f"{_label} (hidden): ").strip()
+    value = input(f"{_label}: ").strip()
     if not re.fullmatch(re.escape(_prefix) + r"[A-Za-z0-9-]+", value):
         raise BridgeError(f"Invalid {_label} format")
     return value
@@ -87,7 +87,11 @@ def serviceText(_command: list[str],
                 _environment: Path | None = None) -> str:
     text = MARKER + "[Unit]\nDescription=Codex Slack Bridge\nStartLimitIntervalSec=0\n\n[Service]\nType=simple\nUMask=0077\n"
     if _environment:
-        text += "EnvironmentFile=" + systemdQuote(str(_environment)).replace("$$", "$") + "\n"
+        environment = str(_environment)
+        if not _environment.is_absolute() or any(ord(char) < 32 for char in environment):
+            raise BridgeError("Environment file paths must be absolute and contain no control characters")
+        #Codex: EnvironmentFile takes a path, not an ExecStart-style quoted argument.
+        text += "EnvironmentFile=" + environment.replace("%", "%%") + "\n"
     text += "ExecStart=" + " ".join(systemdQuote(arg) for arg in _command) + "\n"
     return text + "Restart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
 
@@ -127,12 +131,23 @@ def writeConfiguration(_directory: Path,
         if not re.fullmatch(r"[CG][A-Z0-9]+", channel) or not re.fullmatch(r"[UW][A-Z0-9]+", user):
             raise BridgeError("Use Slack IDs, not channel or display names")
         from slack_sdk import WebClient
+        from slack_sdk.errors import SlackApiError
 
+        stage = "Bot token (auth.test)"
         try:
             team = identifier(WebClient(token=bot).auth_test()["team_id"])
-            WebClient(token=app).apps_connections_open()
-        except Exception:
-            raise BridgeError("Slack token verification failed; check both tokens, connections:write, and the network") from None
+            stage = "App token (apps.connections.open)"
+            WebClient().apps_connections_open(app_token=app)
+        except SlackApiError as error:
+            code = error.response.get("error", "unknown_error")
+            if not isinstance(code, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,79}", code):
+                code = "unknown_error"
+            raise BridgeError(f"{stage}: Slack returned {code}") from None
+        except OSError as error:
+            reason = getattr(error, "reason", error)
+            raise BridgeError(f"{stage}: network connection failed ({type(reason).__name__})") from None
+        except Exception as error:
+            raise BridgeError(f"{stage}: installer verification error ({type(error).__name__})") from None
         token, port = secrets.token_urlsafe(32), 8766
         router = ("[router]\nhost = \"127.0.0.1\"\nport = 8766\n\n"
                   f"[slack]\nteam_id = {json.dumps(team)}\nchannel_id = {json.dumps(channel)}\n"
@@ -167,13 +182,16 @@ def installServices(_directory: Path,
         path = unit_dir / f"codex-slack-{role}.service"
         if path.exists() and not path.read_text().startswith(MARKER):
             raise BridgeError(f"Existing unmanaged service was preserved: {path.name}")
+    launchers = {_home / ".local/bin" / name: str(Path(sys.executable).parent / name)
+                 for name in ("codex-slack", "codex-slack-notify")}
+    for path in launchers:
+        if path.exists() and not path.read_text().startswith("#!/bin/sh\n" + MARKER):
+            raise BridgeError(f"Existing ~/.local/bin/{path.name} was preserved; resolve the name conflict first")
     for role, text in units.items():
         privateWrite(unit_dir / f"codex-slack-{role}.service", text)
-    launcher = _home / ".local/bin/codex-slack"
-    if launcher.exists() and not launcher.read_text().startswith("#!/bin/sh\n" + MARKER):
-        raise BridgeError("Existing ~/.local/bin/codex-slack was preserved; resolve the name conflict first")
-    privateWrite(launcher, "#!/bin/sh\n" + MARKER + "exec " + shlex.quote(executable) + ' "$@"\n')
-    launcher.chmod(0o700)
+    for path, target in launchers.items():
+        privateWrite(path, "#!/bin/sh\n" + MARKER + "exec " + shlex.quote(target) + ' "$@"\n')
+        path.chmod(0o700)
     runCommand(["systemctl", "--user", "daemon-reload"])
     names = [f"codex-slack-{role}.service" for role in units]
     runCommand(["systemctl", "--user", "enable", *names])
@@ -213,14 +231,16 @@ def setup(_join: str | None = None):
     if not config.token_file_:
         raise BridgeError("Setup requires an agent token_file")
     client = RouterClient(config.router_url_, config.agent_id_, config.token_file_.read_text().strip())
+    last_error = ""
     for attempt in range(15):
         try:
             client.call("bindings")
             print("Installed. Services start at boot. Open a Codex conversation, then run ~/.local/bin/codex-slack add")
             return
-        except BridgeError:
+        except BridgeError as error:
+            last_error = str(error)
             time.sleep(1)
-    raise BridgeError("Services were installed but Router is not ready. Run: journalctl --user -u codex-slack-router -u codex-slack-agent -u codex-slack-tunnel -n 30")
+    raise BridgeError(f"Setup incomplete: services were installed but Router is not ready. Last check: {last_error}. Run: journalctl --user -u codex-slack-router -u codex-slack-agent -u codex-slack-tunnel -n 50 --no-pager")
 
 
 def pair(_agent_id: str,

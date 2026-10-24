@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from dataclasses import replace
 
 import pytest
 from conftest import TURN, A, B, bind, paginate, slackEvent
@@ -42,6 +43,30 @@ def test_unrelated_command_reference_does_not_mirror_local_chat(router):
     bind(router)
     router.api("pc-a", "response", event(False, [B]))
     assert outputs(router) == []
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "interrupted"])
+def test_webhook_mode_silences_excerpts_but_completes_slack_commands(router,
+                                                                     status):
+    router.config_ = replace(router.config_, automatic_notifications_=False)
+    bind(router)
+    router.api("pc-a", "response", Codex.progress(A, TURN, 10, "Local work", set()))
+    router.api("pc-a", "response", event(True))
+    assert outputs(router) == []
+    command = router.slackEvent(slackEvent())
+    router.api("pc-a", "claim", {})
+    acknowledgements = outputs(router)
+    progress = Codex.progress(A, B, 11, "Slack work", {command})
+    router.api("pc-a", "response", progress)
+    router.api("pc-a", "response", progress)
+    assert outputs(router) == acknowledgements
+    assert router.store_.status()["commands"][0]["status"] == "claimed"
+    final = Codex.event(A, B, status, "Full answer " + "x" * 2000, {command}, True)
+    router.api("pc-a", "response", final)
+    router.api("pc-a", "response", final)
+    assert len(outputs(router)) == len(acknowledgements) + 1
+    assert outputs(router)[-1]["text"].endswith(final["text"])
+    assert router.store_.status()["commands"][0]["status"] == "completed"
 
 
 def test_progress_throttled_durable_and_never_completes_command(router,

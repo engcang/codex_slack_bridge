@@ -68,8 +68,8 @@ def home(tmp_path):
     rollout = path / "sessions" / "test.jsonl"
     rollout.write_text("")
     with sqlite3.connect(path / "state_5.sqlite") as db:
-        db.execute("CREATE TABLE threads(id TEXT,name TEXT,title TEXT,cwd TEXT,source TEXT,rollout_path TEXT,history_mode TEXT,archived INTEGER)")
-        db.execute("INSERT INTO threads VALUES(?,?,?,?,?,?,?,?)",
+        db.execute("CREATE TABLE threads(id TEXT,name TEXT,title TEXT,cwd TEXT,source TEXT,rollout_path TEXT,history_mode TEXT,archived INTEGER,updated_at INTEGER DEFAULT 0)")
+        db.execute("INSERT INTO threads(id,name,title,cwd,source,rollout_path,history_mode,archived) VALUES(?,?,?,?,?,?,?,?)",
                    (A,
                     "Conversation",
                     "Original title",

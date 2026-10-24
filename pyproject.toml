@@ -29,6 +29,7 @@ dev = ["pytest>=7", "build>=1.2", "twine>=6", "ruff>=0.9", "pre-commit>=4,<5"]
 
 [project.scripts]
 codex-slack = "codex_slack_bridge.cli:main"
+codex-slack-notify = "codex_slack_bridge.notify_slack:main"
 
 [tool.setuptools]
 include-package-data = false

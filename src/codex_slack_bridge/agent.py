@@ -31,6 +31,9 @@ class Agent:
                 cursor = _self.state_.cursor(binding)
                 events, new_cursor = _self.codex_.responses(binding["thread_id"], cursor)
                 for event in events:
+                    event = dict(event)
+                    event["command_ids"] = sorted(set(event.get("command_ids", [])) | set(_self.state_.matchInput(event)))
+                    event.pop("inputs", None)
                     _self.client_.call("response", event)
                 #Codex: Only checkpoint after every event is durably acknowledged by the Router.
                 _self.state_.saveCursor(binding, new_cursor)
@@ -49,8 +52,12 @@ class Agent:
                       "detail": "History observation is unavailable; command was not executed. Inspect Agent compatibility before retrying."}
         else:
             try:
+                _self.state_.trackInput(command_id,
+                                        command["thread_id"],
+                                        command["text"],
+                                        _self.codex_.inputCursor(command["thread_id"]))
                 result = _self.codex_.queue(command["thread_id"], command_id, command["text"])
-            except (BridgeError, sqlite3.Error) as exc:
+            except (BridgeError, sqlite3.Error, OSError) as exc:
                 result = {"status": "rejected",
                           "detail": f"Codex preflight failed ({type(exc).__name__}); command was not executed"}
         _self.state_.finishAttempt(command_id, result)

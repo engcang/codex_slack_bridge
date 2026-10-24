@@ -75,8 +75,8 @@ print(f'Queued message {TURN} for thread {thread}.')
         assert slack.messages_[-1]["root_ts"] == "100.001"
         assert all(m["channel_id"] == "C1" for m in slack.messages_)
         events = [json.loads(line) for line in (home / "sessions/test.jsonl").read_text().splitlines()]
-        assert cid in events[1]["payload"]["message"]
-        assert "$(not-a-shell-command)" in events[1]["payload"]["message"]
+        assert events[1]["payload"]["message"] == "Say ROUNDTRIP_OK; literal $(not-a-shell-command)"
+        assert cid not in events[1]["payload"]["message"]
     finally:
         state.close()
         server.shutdown()

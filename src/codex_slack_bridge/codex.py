@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -84,8 +85,26 @@ class Codex:
     def sessions(_self) -> list[dict]:
         with closing(readonly(_self.home_ / "state_5.sqlite")) as db:
             rows = db.execute("SELECT id,name,title,cwd FROM threads "
-                              "WHERE archived=0 AND source='vscode' ORDER BY cwd,id").fetchall()
-        return [dict(row) for row in rows if _self.ownerPid(row["id"])]
+                              "WHERE archived=0 AND source='vscode' ORDER BY updated_at DESC,id").fetchall()
+        return [{**dict(row), "is_open": bool(_self.ownerPid(row["id"]))} for row in rows]
+
+    def inputCursor(_self,
+                    _thread_id: str) -> dict:
+        thread = _self.thread(_thread_id)
+        if thread["history_mode"] == "paginated":
+            with closing(readonly(_self.home_ / "thread_history_1.sqlite")) as db:
+                position = db.execute("SELECT COALESCE(MAX(rollout_ordinal),-1) FROM thread_items WHERE thread_id=?",
+                                      (_thread_id,)).fetchone()[0]
+            return {"mode": "paginated", "position": position}
+        if thread["history_mode"] != "legacy":
+            raise BridgeError("Unsupported Codex history mode")
+        return {"mode": "legacy", "position": _self.completeOffset(_self.rollout(thread))}
+
+    @staticmethod
+    def inputReference(_text: str,
+                       _mode: str,
+                       _position: int) -> dict:
+        return {"hash": hashlib.sha256(_text.encode()).hexdigest(), "mode": _mode, "position": _position}
 
     def ownerPid(_self,
                  _thread_id: str) -> int | None:
@@ -118,7 +137,7 @@ class Codex:
         if not _self.ownerPid(_thread_id):
             return {"status": "rejected",
                     "detail": "Original session is not loaded or its owner cannot be verified. Open that conversation before sending a new reply."}
-        message = f"{REQUEST_PREFIX}{threadUuid(_command_id)}\n\n{_text}"
+        threadUuid(_command_id)
         env = {**os.environ, "CODEX_HOME": str(_self.home_)}
         try:
             result = subprocess.run([_self.executable(),
@@ -126,7 +145,7 @@ class Codex:
                                      "--thread",
                                      threadUuid(_thread_id),
                                      "--message",
-                                     message],
+                                     _text],
                                     env=env,
                                     capture_output=True,
                                     text=True,
@@ -214,7 +233,7 @@ class Codex:
                                (_thread_id, _cursor["ordinal"])).fetchall()
             for turn in turns:
                 finished = turn["status"] in ("completed", "failed", "interrupted")
-                texts, requests, progress = [], set(), []
+                texts, requests, progress, inputs = [], set(), [], []
                 worked = False
                 for row in db.execute("SELECT item_json,rollout_ordinal FROM thread_items WHERE thread_id=? AND turn_id=? ORDER BY rollout_ordinal",
                                       (_thread_id, turn["turn_id"])):
@@ -229,13 +248,20 @@ class Codex:
                     elif kind == "agentMessage" and item.get("phase") == "commentary" and worked:
                         progress.append((row[1], item.get("text", "")))
                     elif item.get("type") == "userMessage":
+                        parts = []
                         for part in item.get("content", []):
                             requests.update(REQUEST_RE.findall(part.get("text", "")))
+                            if part.get("type") == "text":
+                                parts.append(part.get("text", ""))
+                        for text in dict.fromkeys([*parts, "\n".join(parts)]):
+                            inputs.append(_self.inputReference(text, "paginated", row[1]))
                 if not finished:
                     seen = _cursor.get("progress_ordinal", -1)
                     if progress and progress[-1][0] > seen:
                         ordinal, text = progress[-1]
-                        events.append(_self.progress(_thread_id, turn["turn_id"], ordinal, text, requests))
+                        event = _self.progress(_thread_id, turn["turn_id"], ordinal, text, requests)
+                        event["inputs"] = inputs
+                        events.append(event)
                         _cursor["progress_ordinal"] = ordinal
                     break
                 events.append(_self.event(_thread_id,
@@ -244,6 +270,7 @@ class Codex:
                                           "\n\n".join(texts),
                                           requests,
                                           worked))
+                events[-1]["inputs"] = inputs
                 _cursor["ordinal"] = turn["rollout_ordinal"]
                 _cursor.pop("progress_ordinal", None)
         return events, _cursor
@@ -272,11 +299,14 @@ class Codex:
                         _cursor["turn_id"] = p.get("turn_id")
                         _cursor["worked"] = False
                         requests = set()
+                        _cursor["inputs"] = []
                     elif kind == "user_message":
                         requests.update(REQUEST_RE.findall(p.get("message", "")))
+                        _cursor.setdefault("inputs", []).append(_self.inputReference(p.get("message", ""), "legacy", stream.tell()))
                     elif kind == "agent_message" and p.get("phase") == "commentary" and _cursor.get("worked"):
                         if _cursor.get("turn_id"):
                             events.append(_self.progress(_thread["id"], _cursor["turn_id"], stream.tell(), p.get("message", ""), requests))
+                            events[-1]["inputs"] = list(_cursor.get("inputs", []))
                     elif kind in ("task_complete", "turn_aborted"):
                         turn_id = p.get("turn_id") or _cursor.get("turn_id")
                         if not turn_id:
@@ -288,12 +318,14 @@ class Codex:
                                                   p.get("last_agent_message") or "",
                                                   requests,
                                                   _cursor.get("worked", False)))
+                        events[-1]["inputs"] = _cursor.pop("inputs", [])
                         requests = set()
                         _cursor.pop("turn_id", None)
                         _cursor.pop("worked", None)
                 elif item.get("type") == "response_item" and p.get("type") in ("function_call", "custom_tool_call", "web_search_call"):
                     if not _cursor.get("worked") and _cursor.get("turn_id"):
                         events.append(_self.progress(_thread["id"], _cursor["turn_id"], stream.tell(), "Codex is working on this task.", requests))
+                        events[-1]["inputs"] = list(_cursor.get("inputs", []))
                     _cursor["worked"] = True
                 _cursor["offset"] = stream.tell()
         _cursor["requests"] = sorted(requests)

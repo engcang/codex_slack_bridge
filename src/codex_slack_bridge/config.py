@@ -68,6 +68,7 @@ class RouterConfig:
     app_token_env_: str = "SLACK_APP_TOKEN"
     tls_cert_: str | None = None
     tls_key_: str | None = None
+    automatic_notifications_: bool = True
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,9 @@ def loadConfig(_path: str | Path,
         agents = {identifier(k): v["token_env"] for k, v in data["agents"].items()}
         if not users or not channels or channel not in channels or not agents:
             raise BridgeError("Configure allowed users, channels and at least one Agent")
+        automatic_notifications = section.get("automatic_notifications", True)
+        if type(automatic_notifications) is not bool:
+            raise BridgeError("automatic_notifications must be true or false")
         cert, key = section.get("tls_cert"), section.get("tls_key")
         host = section.get("host", "127.0.0.1")
         if bool(cert) != bool(key) or (not loopback(host) and not cert):
@@ -128,6 +132,7 @@ def loadConfig(_path: str | Path,
                             port_=port,
                             tls_cert_=cert,
                             tls_key_=key,
+                            automatic_notifications_=automatic_notifications,
                             bot_token_env_=slack.get("bot_token_env", "SLACK_BOT_TOKEN"),
                             app_token_env_=slack.get("app_token_env", "SLACK_APP_TOKEN"))
     except (KeyError, TypeError, ValueError, OSError) as exc:
