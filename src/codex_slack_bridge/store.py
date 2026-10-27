@@ -68,6 +68,8 @@ class Store:
         _self.db_.execute("PRAGMA journal_mode=WAL")
         _self.db_.execute("PRAGMA foreign_keys=ON")
         _self.db_.executescript(SCHEMA)
+        if "mode" not in {row["name"] for row in _self.db_.execute("PRAGMA table_info(commands)")}:
+            _self.db_.execute("ALTER TABLE commands ADD COLUMN mode TEXT NOT NULL DEFAULT 'queue'")
         _self.lock_ = threading.RLock()
 
     def close(_self):
@@ -163,23 +165,31 @@ class Store:
             if not binding:
                 return None
             command_id, now = str(uuid4()), time.time()
-            db.execute("INSERT INTO commands(id,event_id,binding_id,user_id,text,status,created_at,updated_at) "
-                       "VALUES(?,?,?,?,?,'pending',?,?)",
-                       (command_id, _event_id, binding["id"], _user, _text, now, now))
+            parts = _text.lstrip().split(maxsplit=1)
+            mode = "steer" if parts and parts[0] == "!steer" else "queue"
+            if mode == "steer":
+                _text = parts[1].strip() if len(parts) == 2 else ""
+            status = "pending" if _text else "rejected"
+            detail = "Usage: !steer <message>" if not _text else ""
+            db.execute("INSERT INTO commands(id,event_id,binding_id,user_id,text,status,created_at,updated_at,mode,detail) "
+                       "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                       (command_id, _event_id, binding["id"], _user, _text, status, now, now, mode, detail))
             _self.outbox(db,
                          binding["id"],
                          f"received:{command_id}",
-                         f"Received; waiting for {binding['agent_id']}.")
+                         detail or (f"Steer received; contacting {binding['agent_id']}." if mode == "steer" else f"Received; waiting for {binding['agent_id']}."))
             return command_id
 
     def claim(_self,
-              _agent_id: str) -> dict | None:
+              _agent_id: str,
+              _steer: bool = False) -> dict | None:
         with _self.transaction() as db:
             row = db.execute("SELECT c.*,b.thread_id FROM commands c JOIN bindings b ON b.id=c.binding_id "
-                             "WHERE b.agent_id=? AND b.enabled=1 AND c.status='pending' AND NOT EXISTS "
+                             "WHERE b.agent_id=? AND b.enabled=1 AND c.status='pending' AND (c.mode='queue' OR ?) AND NOT EXISTS "
                              "(SELECT 1 FROM commands busy WHERE busy.binding_id=c.binding_id "
-                             "AND busy.status IN ('claimed','accepted','uncertain')) ORDER BY c.created_at LIMIT 1",
-                             (_agent_id,)).fetchone()
+                             "AND (busy.status='claimed' OR (c.mode='queue' AND busy.status IN ('accepted','uncertain')))) "
+                             "ORDER BY (c.mode='steer') DESC,c.created_at,c.rowid LIMIT 1",
+                             (_agent_id, _steer)).fetchone()
             if not row:
                 return None
             db.execute("UPDATE commands SET status='claimed',updated_at=? WHERE id=?",
@@ -416,6 +426,8 @@ class Store:
         with _self.transaction() as db:
             db.execute("UPDATE attempts SET result_json=? WHERE command_id=?",
                        (json.dumps(_result), _command_id))
+            if _result.get("status") == "accepted" and _result.get("turn_id"):
+                db.execute("UPDATE input_links SET turn_id=? WHERE command_id=?", (_result["turn_id"], _command_id))
 
     def trackInput(_self,
                    _command_id: str,

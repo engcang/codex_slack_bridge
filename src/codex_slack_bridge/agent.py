@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
+import time
 
 from .codex import Codex
 from .config import BridgeError
@@ -40,14 +41,16 @@ class Agent:
                 valid.add(binding["id"])
             except (BridgeError, sqlite3.Error, OSError, ValueError) as exc:
                 LOG.warning("Cannot observe binding %s (%s)", binding["id"], type(exc).__name__)
-        command = _self.client_.call("claim").get("command")
+        command = _self.client_.call("claim", {"steer": True}).get("command")
         if not command:
             return
         command_id = command["id"]
         if not _self.state_.beginAttempt(command_id):
             #Codex: Already attempted locally: never call Codex twice for the same command.
             return
-        if command["binding_id"] not in valid:
+        if command.get("mode") == "steer" and time.time() - command["created_at"] > 60:
+            result = {"status": "rejected", "detail": "Steer expired after 60 seconds without delivery. Send it again only if still relevant."}
+        elif command["binding_id"] not in valid:
             result = {"status": "rejected",
                       "detail": "History observation is unavailable; command was not executed. Inspect Agent compatibility before retrying."}
         else:
@@ -56,7 +59,8 @@ class Agent:
                                         command["thread_id"],
                                         command["text"],
                                         _self.codex_.inputCursor(command["thread_id"]))
-                result = _self.codex_.queue(command["thread_id"], command_id, command["text"])
+                dispatch = _self.codex_.steer if command.get("mode") == "steer" else _self.codex_.queue
+                result = dispatch(command["thread_id"], command_id, command["text"])
             except (BridgeError, sqlite3.Error, OSError) as exc:
                 result = {"status": "rejected",
                           "detail": f"Codex preflight failed ({type(exc).__name__}); command was not executed"}

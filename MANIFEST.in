@@ -7,6 +7,7 @@ include src/codex_slack_bridge/agent.py
 include src/codex_slack_bridge/cli.py
 include src/codex_slack_bridge/codex.py
 include src/codex_slack_bridge/config.py
+include src/codex_slack_bridge/ipc.py
 include src/codex_slack_bridge/notify_slack.py
 include src/codex_slack_bridge/router.py
 include src/codex_slack_bridge/setup.py

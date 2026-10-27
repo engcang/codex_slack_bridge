@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import UUID
 
 from .config import BridgeError
+from .ipc import CodexIpc, IpcError
 
 REQUEST_PREFIX = "Slack bridge request: "
 REQUEST_RE = re.compile(r"^Slack bridge request: ([0-9a-f-]{36})$", re.MULTILINE)
@@ -128,6 +129,64 @@ class Codex:
         except (OSError, ValueError):
             return None
         return None
+
+    def activeTurn(_self,
+                   _thread_id: str) -> str | None:
+        thread = _self.thread(_thread_id)
+        if thread["history_mode"] == "paginated":
+            with closing(readonly(_self.home_ / "thread_history_1.sqlite")) as db:
+                row = db.execute("SELECT turn_id,status FROM thread_turns WHERE thread_id=? ORDER BY rollout_ordinal DESC LIMIT 1",
+                                 (_thread_id,)).fetchone()
+            return row["turn_id"] if row and row["status"] == "inProgress" else None
+        if thread["history_mode"] != "legacy":
+            raise BridgeError("Unsupported Codex history mode")
+        active = None
+        with _self.rollout(thread).open("rb") as stream:
+            for line in stream:
+                if not line.endswith(b"\n"):
+                    break
+                item = json.loads(line)
+                if item.get("type") != "event_msg":
+                    continue
+                payload = item.get("payload", {})
+                if payload.get("type") == "task_started":
+                    active = payload.get("turn_id")
+                elif payload.get("type") in ("task_complete", "turn_aborted"):
+                    active = None
+        return active
+
+    def steer(_self,
+              _thread_id: str,
+              _command_id: str,
+              _text: str) -> dict:
+        sent = False
+        try:
+            thread = _self.thread(_thread_id)
+            threadUuid(_command_id)
+            owner_pid = _self.ownerPid(_thread_id)
+            if not owner_pid:
+                raise BridgeError("Open the existing Codex conversation in VS Code before using !steer")
+            turn = _self.activeTurn(_thread_id)
+            if not turn:
+                raise BridgeError("No active Codex turn to steer. Send a normal message to start the next task.")
+            with CodexIpc(_self.home_, _self.timeout_) as client:
+                owner = client.owner(_thread_id)
+                if _self.ownerPid(_thread_id) != owner_pid or _self.activeTurn(_thread_id) != turn:
+                    raise BridgeError("The active Codex turn changed before steering; no message was sent")
+                sent = True
+                turn_id = threadUuid(client.steer(owner, _thread_id, _command_id, _text, thread["cwd"]))
+            return {"status": "accepted", "turn_id": turn_id, "detail": "Steer accepted by the active Codex turn; awaiting its result."}
+        except IpcError as exc:
+            error = str(exc)
+            if error in ("no-client-found", "request-version-mismatch", "no-handler-for-request") or "no active turn to steer" in error or "is not being streamed" in error:
+                return {"status": "rejected", "detail": "Steer unavailable: keep the existing VS Code chat open with a task running. No message was queued."}
+            return {"status": "uncertain" if sent else "rejected",
+                    "detail": "Codex IPC could not confirm steering. Inspect the VS Code conversation; no automatic retry or queue fallback."}
+        except (OSError, BridgeError, ValueError, KeyError, TypeError, sqlite3.Error) as exc:
+            if sent:
+                return {"status": "uncertain", "detail": "Steer acknowledgement unavailable; delivery may have occurred. Inspect VS Code before retrying."}
+            detail = str(exc) if isinstance(exc, BridgeError) else "Codex steering connection/history is unavailable. Keep the existing VS Code chat open."
+            return {"status": "rejected", "detail": detail}
 
     def queue(_self,
               _thread_id: str,

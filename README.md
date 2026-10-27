@@ -59,6 +59,9 @@ sh setup.sh
 
 + Conversations are listed newest first, five at a time. Enter **`m`** for more, a number to select, or **`q`** to cancel. Closed conversations must be opened in VS Code before selecting them. Use `codex-slack add --all` to show everything at once; `codex-slack` alone also opens the picker.
 + Reply inside the new Slack message's **thread**. Only your configured Slack member ID can send commands. Repeat `add` for each new conversation; existing registrations survive restarts.
++ Normal replies wait for the previous command to finish. Use `!steer Focus on the failing tests first` to update the running task immediately; the `!steer` prefix is removed before delivery. Steering adds instructions; it does not cancel a running tool.
+    + Keep the target VS Code Codex chat open with a task running. Empty, idle, unavailable, or undelivered requests older than 60 seconds are rejected; they never become queued tasks. Unconfirmed delivery is not retried automatically.
+    + Steering uses the local IPC interface found in extension `26.1007.21434`; compatibility can change with Codex updates. Update both Router and Agent with `sh setup.sh` on their respective PCs.
 + **Slack requests:** receive progress and the complete final response in that thread.
 + **PC requests:** ordinary chat stays local. Turns that use tools send progress and the complete final answer. No user prompts, reasoning or tool output are mirrored.
 + Final answers are sent in full, split into ordered messages of up to 3,500 characters when needed.

@@ -71,7 +71,7 @@ class Router:
         if _operation == "bindings":
             return {"bindings": _self.store_.bindings(_agent_id)}
         if _operation == "claim":
-            return {"command": _self.store_.claim(_agent_id)}
+            return {"command": _self.store_.claim(_agent_id, _payload.get("steer") is True)}
         if _operation == "notify":
             channel = _payload.get("channel_id") or _self.config_.channel_id_
             if channel not in _self.config_.allowed_channel_ids_:
