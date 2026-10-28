@@ -322,7 +322,7 @@ class Store:
                              "SELECT *,ROW_NUMBER() OVER (PARTITION BY binding_id ORDER BY CAST(slack_ts AS REAL) DESC) AS position FROM replies"
                              ") SELECT r.* FROM ranked r LEFT JOIN slack_cleanup c "
                              "ON c.channel_id=r.channel_id AND c.slack_ts=r.slack_ts "
-                             "WHERE r.position>100 AND (c.status IS NULL OR c.status='pending') "
+                             "WHERE r.position>50 AND (c.status IS NULL OR c.status='pending') "
                              "ORDER BY CAST(r.slack_ts AS REAL),r.binding_id LIMIT 1").fetchone()
             if not row:
                 return None

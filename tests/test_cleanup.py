@@ -32,9 +32,9 @@ def deletionGateway(_calls,
     return SimpleNamespace(delete=delete)
 
 
-def test_keeps_100_replies_including_progress_and_preserves_root_and_commands(router):
+def test_keeps_50_replies_including_progress_and_preserves_root_and_commands(router):
     binding = bind(router)
-    timestamps = sentReplies(router, binding, 100)
+    timestamps = sentReplies(router, binding, 50)
     calls = []
     gateway = deletionGateway(calls)
     assert not cleanupOnce(router.store_, gateway)
@@ -48,7 +48,7 @@ def test_keeps_100_replies_including_progress_and_preserves_root_and_commands(ro
     assert router.store_.status()["commands"][0]["id"] == command
     assert router.api("pc-a", "claim", {})["command"]["id"] == command
     assert router.store_.status()["cleanup"] == []
-    assert router.store_.db_.execute("SELECT count(*) FROM outbox WHERE status='sent'").fetchone()[0] == 104
+    assert router.store_.db_.execute("SELECT count(*) FROM outbox WHERE status='sent'").fetchone()[0] == 54
     #Codex: Deleting old Slack replies must not block later outbox delivery.
     posted = []
     assert deliverOnce(router.store_, SimpleNamespace(post=lambda _output: posted.append(_output) or {"status": "sent", "ts": "500.000001"}))
@@ -58,8 +58,8 @@ def test_keeps_100_replies_including_progress_and_preserves_root_and_commands(ro
 def test_cleanup_is_per_thread_and_skips_disabled_sessions(router):
     first = bind(router)
     second = bind(router, _agent="pc-b", _thread=A, _request=B)
-    sentReplies(router, first, 102)
-    sentReplies(router, second, 101, 400)
+    sentReplies(router, first, 52)
+    sentReplies(router, second, 51, 400)
     router.api("pc-a", "unbind", {"thread_id": A})
     calls = []
     gateway = deletionGateway(calls)
@@ -75,7 +75,7 @@ def test_cleanup_is_per_thread_and_skips_disabled_sessions(router):
 
 def test_split_messages_count_individually_and_uncertain_delivery_is_not_deleted(router):
     binding = bind(router)
-    sentReplies(router, binding, 99)
+    sentReplies(router, binding, 49)
     with router.store_.transaction() as db:
         router.store_.outbox(db, binding["id"], "long-answer", "x" * 7001)
     calls = []
@@ -94,7 +94,7 @@ def test_split_messages_count_individually_and_uncertain_delivery_is_not_deleted
 def test_duplicate_timestamps_count_once_and_no_recorded_root_can_be_deleted(router):
     first = bind(router)
     bind(router, _agent="pc-b", _thread=A, _request=B)
-    sentReplies(router, first, 100)
+    sentReplies(router, first, 50)
     for key, ts in [("duplicate", "200.000001"), ("own-root", "100.001"), ("other-root", "100.002")]:
         with router.store_.transaction() as db:
             router.store_.outbox(db, first["id"], key, "Recorded duplicate")
@@ -105,7 +105,7 @@ def test_duplicate_timestamps_count_once_and_no_recorded_root_can_be_deleted(rou
 
 def test_retention_uses_slack_timestamp_instead_of_queue_creation_order(router):
     binding = bind(router)
-    sentReplies(router, binding, 100, 1000)
+    sentReplies(router, binding, 50, 1000)
     sentReplies(router, binding, 1, 200)
     assert router.store_.nextCleanup()["slack_ts"] == "200.000001"
 
@@ -116,7 +116,7 @@ def test_cleanup_retries_after_restart_with_shared_cooldown(router,
     clock = [1000.0]
     monkeypatch.setattr("codex_slack_bridge.store.time.time", lambda: clock[0])
     binding = bind(router)
-    sentReplies(router, binding, 102)
+    sentReplies(router, binding, 52)
     first = router.store_.nextCleanup()
     assert first["slack_ts"] == "200.000001"
     reopened = Store(tmp_path / "router.sqlite3")
@@ -138,7 +138,7 @@ def test_cleanup_retries_after_restart_with_shared_cooldown(router,
 
 def test_cleanup_failure_is_visible_and_does_not_block_other_replies(router):
     binding = bind(router)
-    sentReplies(router, binding, 102)
+    sentReplies(router, binding, 52)
     message = router.store_.nextCleanup()
     router.store_.cleanupResult("C1", message["slack_ts"], "failed", "Slack rejected deletion: cant_delete_message")
     assert router.store_.status()["cleanup"][0]["status"] == "failed"
@@ -148,7 +148,7 @@ def test_cleanup_failure_is_visible_and_does_not_block_other_replies(router):
 def test_existing_database_without_cleanup_table_is_upgraded(router,
                                                              tmp_path):
     binding = bind(router)
-    sentReplies(router, binding, 101)
+    sentReplies(router, binding, 51)
     router.store_.db_.execute("DROP TABLE slack_cleanup")
     upgraded = Store(tmp_path / "router.sqlite3")
     try:
